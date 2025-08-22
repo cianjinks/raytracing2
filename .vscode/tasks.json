@@ -1,0 +1,21 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build Viewer Debug",
+            "type": "shell",
+            "command": "./build.sh",
+            "args": [
+                "debug"
+            ]
+        },
+        {
+            "label": "Build Viewer Release",
+            "type": "shell",
+            "command": "./build.sh",
+            "args": [
+                "release"
+            ]
+        }
+    ]
+}

@@ -18,13 +18,13 @@ fi
 BUILD_DIR="$BASE_DIR/build/$BUILD_MODE"
 mkdir -p "$BUILD_DIR"
 
+ODIN_FLAGS="-define:GLFW_SHARED=false -define:WGPU_SHARED=false"
+
 if [[ "$BUILD_MODE" == "debug" ]]; then
-    ODIN_FLAGS="-debug"
-else
-    ODIN_FLAGS=""
+    ODIN_FLAGS+=" -debug"
 fi
 
-odin build $BASE_DIR/bin/viewer $ODIN_FLAGS -out:"$BUILD_DIR/viewer" -collection:raytracing2="$BASE_DIR"
+odin build $BASE_DIR/bin/viewer $ODIN_FLAGS -out:"$BUILD_DIR/viewer" -collection:external="$BASE_DIR/external" -collection:raytracing2="$BASE_DIR"
 
 if [[ $? -ne 0 ]]; then
     echo "Failed :("

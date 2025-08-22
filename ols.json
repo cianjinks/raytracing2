@@ -4,6 +4,10 @@
         {
             "name": "raytracing2",
             "path": "."
+        },
+        {
+            "name": "external",
+            "path": "./external"
         }
     ],
     "enable_document_symbols": true,

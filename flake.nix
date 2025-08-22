@@ -18,9 +18,18 @@
       in
       {
         devShell = pkgs.mkShell {
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+            # Even when statically compiled, GLFW tries to load various shared libraries:
+            #  - libwayland-client.so.0: https://github.com/glfw/glfw/blob/63a7e8b7f82497b0459acba5c1ce7f39aa2bc0e8/src/wl_init.c#L521
+            #  - libxkbcommon.so.0: https://github.com/glfw/glfw/blob/63a7e8b7f82497b0459acba5c1ce7f39aa2bc0e8/src/wl_init.c#L666
+            pkgs.wayland
+            pkgs.libxkbcommon
+          ];
           packages = [
             # Odin
             pkgs.odin
+            # Debugger
+            pkgs.lldb
           ];
         };
       }
