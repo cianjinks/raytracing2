@@ -10,19 +10,19 @@ import "external:wgpu/glfwglue"
 
 import "raytracing2:lib/core"
 
-error_callback :: proc "c" (error: i32, description: cstring) {
+glfw_error_callback :: proc "c" (error: i32, description: cstring) {
 	context = runtime.default_context()
 	fmt.printfln("[GLFW Error] %d: %s", error, description)
 }
 
-log_callback :: proc "c" (level: wgpu.LogLevel, message: wgpu.StringView, userdata: rawptr) {
+wgpu_log_callback :: proc "c" (level: wgpu.LogLevel, message: wgpu.StringView, userdata: rawptr) {
 	context = runtime.default_context()
-	fmt.println(message)
+	fmt.printfln("[WGPU Log] %s", message)
 }
 
 main :: proc() {
-	glfw.SetErrorCallback(error_callback)
-	wgpu.SetLogCallback(log_callback, nil)
+	glfw.SetErrorCallback(glfw_error_callback)
+	wgpu.SetLogCallback(wgpu_log_callback, nil)
 
 	// GLFW initialization
 	if !glfw.Init() {

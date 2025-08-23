@@ -24,6 +24,15 @@
             #  - libxkbcommon.so.0: https://github.com/glfw/glfw/blob/63a7e8b7f82497b0459acba5c1ce7f39aa2bc0e8/src/wl_init.c#L666
             pkgs.wayland
             pkgs.libxkbcommon
+            # Provide WebGPU with OpenGL backend
+            # pkgs.libGL
+            # Provide WebGPU with Vulkan backend
+            pkgs.vulkan-headers
+            pkgs.vulkan-loader
+            pkgs.vulkan-tools
+            pkgs.vulkan-tools-lunarg
+            pkgs.vulkan-extension-layer
+            pkgs.vulkan-validation-layers
           ];
           packages = [
             # Odin
