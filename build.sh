@@ -21,7 +21,7 @@ mkdir -p "$BUILD_DIR"
 ODIN_FLAGS="-define:GLFW_SHARED=false -define:WGPU_SHARED=false"
 
 if [[ "$BUILD_MODE" == "debug" ]]; then
-    ODIN_FLAGS+=" -debug"
+    ODIN_FLAGS+=" -debug -define:GLFW_DEBUG=true -define:WGPU_DEBUG=true"
 fi
 
 odin build $BASE_DIR/bin/viewer $ODIN_FLAGS -out:"$BUILD_DIR/viewer" -collection:external="$BASE_DIR/external" -collection:raytracing2="$BASE_DIR"
