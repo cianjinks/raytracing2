@@ -11,15 +11,18 @@ import "external:wgpu/glfwglue"
 import "raytracing2:bin/viewer/window"
 
 Renderer :: struct {
-	ctx:           runtime.Context,
-	window_width:  u32,
-	window_height: u32,
-	instance:      wgpu.Instance,
-	surface:       wgpu.Surface,
-	adapter:       wgpu.Adapter,
-	device:        wgpu.Device,
-	config:        wgpu.SurfaceConfiguration,
-	queue:         wgpu.Queue,
+	ctx:             runtime.Context,
+	window_width:    u32,
+	window_height:   u32,
+	instance:        wgpu.Instance,
+	surface:         wgpu.Surface,
+	adapter:         wgpu.Adapter,
+	device:          wgpu.Device,
+	config:          wgpu.SurfaceConfiguration,
+	queue:           wgpu.Queue,
+	module:          wgpu.ShaderModule,
+	pipeline_layout: wgpu.PipelineLayout,
+	pipeline:        wgpu.RenderPipeline,
 }
 
 // TODO: We should possibly just take a surface here so that the renderer
@@ -92,6 +95,10 @@ on_update :: proc(r: ^Renderer) {
 			},
 		},
 	)
+
+	wgpu.RenderPassEncoderSetPipeline(render_pass, r.pipeline)
+	wgpu.RenderPassEncoderDraw(render_pass, 3, 1, 0, 0)
+
 	wgpu.RenderPassEncoderEnd(render_pass)
 	wgpu.RenderPassEncoderRelease(render_pass)
 
@@ -114,6 +121,9 @@ on_event :: proc(r: ^Renderer, event: window.Event) {
 }
 
 destroy :: proc(r: ^Renderer) {
+	wgpu.RenderPipelineRelease(r.pipeline)
+	wgpu.PipelineLayoutRelease(r.pipeline_layout)
+	wgpu.ShaderModuleRelease(r.module)
 	wgpu.SurfaceUnconfigure(r.surface)
 	wgpu.QueueRelease(r.queue)
 	wgpu.DeviceRelease(r.device)
@@ -180,4 +190,54 @@ request_device_callback :: proc "c" (
 	wgpu.SurfaceConfigure(r.surface, &r.config)
 
 	r.queue = wgpu.DeviceGetQueue(r.device)
+
+	r.module = wgpu.DeviceCreateShaderModule(
+		r.device,
+		&{
+			nextInChain = &wgpu.ShaderSourceWGSL {
+				sType = .ShaderSourceWGSL,
+				code = #load("shader.wgsl", string),
+			},
+		},
+	)
+
+	r.pipeline_layout = wgpu.DeviceCreatePipelineLayout(r.device, &{})
+	r.pipeline = wgpu.DeviceCreateRenderPipeline(
+		r.device,
+		&wgpu.RenderPipelineDescriptor {
+			layout = r.pipeline_layout,
+			vertex = wgpu.VertexState {
+				module = r.module,
+				entryPoint = "vs_main",
+				bufferCount = 0,
+				buffers = nil,
+				constantCount = 0,
+				constants = nil,
+			},
+			primitive = wgpu.PrimitiveState {
+				topology = .TriangleList,
+				stripIndexFormat = .Undefined,
+				frontFace = .CCW,
+				cullMode = .None,
+			},
+			depthStencil = nil,
+			multisample = wgpu.MultisampleState {
+				count = 1,
+				mask = 0xFFFFFFFF,
+				alphaToCoverageEnabled = false,
+			},
+			fragment = &wgpu.FragmentState {
+				module = r.module,
+				entryPoint = "fs_main",
+				targetCount = 1,
+				targets = &wgpu.ColorTargetState {
+					format = .BGRA8Unorm,
+					blend = nil,
+					writeMask = wgpu.ColorWriteMaskFlags_All,
+				},
+				constantCount = 0,
+				constants = nil,
+			},
+		},
+	)
 }
