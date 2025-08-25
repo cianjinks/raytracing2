@@ -1,4 +1,4 @@
-package window
+package viewer
 
 import "base:runtime"
 
@@ -24,7 +24,7 @@ WindowUserPointer :: struct {
 	callback_user_data: rawptr,
 }
 
-create :: proc(
+window_create :: proc(
 	name: string,
 	width: u32,
 	height: u32,
@@ -70,28 +70,28 @@ create :: proc(
 	return w
 }
 
-should_close :: proc(w: ^Window) -> b32 {
+window_should_close :: proc(w: ^Window) -> b32 {
 	return glfw.WindowShouldClose(w.raw_window)
 }
 
-on_update :: proc() {
+window_on_update :: proc() {
 	glfw.PollEvents()
 }
 
-destroy :: proc(w: ^Window) {
+window_destroy :: proc(w: ^Window) {
 	glfw.DestroyWindow(w.raw_window)
 	free(w.user_pointer)
 	free(w)
 	glfw.Terminate()
 }
 
-@(private)
+@(private = "file")
 error_callback :: proc "c" (error: c.int, description: cstring) {
 	context = runtime.default_context()
 	log.infof("[GLFW Error] %d - %s", error, description)
 }
 
-@(private)
+@(private = "file")
 framebuffer_size_callback :: proc "c" (window: glfw.WindowHandle, width, height: c.int) {
 	user_data := (^WindowUserPointer)(glfw.GetWindowUserPointer(window))
 	context = user_data.ctx
@@ -104,7 +104,7 @@ framebuffer_size_callback :: proc "c" (window: glfw.WindowHandle, width, height:
 	user_data.callback(event, user_data.callback_user_data)
 }
 
-@(private)
+@(private = "file")
 key_callback :: proc "c" (window: glfw.WindowHandle, key, scancode, action, mods: c.int) {
 	user_data := (^WindowUserPointer)(glfw.GetWindowUserPointer(window))
 	context = user_data.ctx
@@ -126,7 +126,7 @@ key_callback :: proc "c" (window: glfw.WindowHandle, key, scancode, action, mods
 	user_data.callback(event, user_data.callback_user_data)
 }
 
-@(private)
+@(private = "file")
 mouse_button_callback :: proc "c" (window: glfw.WindowHandle, button, action, mods: c.int) {
 	user_data := (^WindowUserPointer)(glfw.GetWindowUserPointer(window))
 	context = user_data.ctx
@@ -146,7 +146,7 @@ mouse_button_callback :: proc "c" (window: glfw.WindowHandle, button, action, mo
 	user_data.callback(event, user_data.callback_user_data)
 }
 
-@(private)
+@(private = "file")
 cursor_pos_callback :: proc "c" (window: glfw.WindowHandle, xpos, ypos: f64) {
 	user_data := (^WindowUserPointer)(glfw.GetWindowUserPointer(window))
 	context = user_data.ctx
@@ -159,7 +159,7 @@ cursor_pos_callback :: proc "c" (window: glfw.WindowHandle, xpos, ypos: f64) {
 	user_data.callback(event, user_data.callback_user_data)
 }
 
-@(private)
+@(private = "file")
 scroll_callback :: proc "c" (window: glfw.WindowHandle, xoffset, yoffset: f64) {
 	user_data := (^WindowUserPointer)(glfw.GetWindowUserPointer(window))
 	context = user_data.ctx

@@ -1,4 +1,4 @@
-package window
+package viewer
 
 import "core:c"
 

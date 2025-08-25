@@ -1,4 +1,4 @@
-package renderer
+package viewer
 
 import "base:runtime"
 
@@ -7,8 +7,6 @@ import "core:log"
 import "external:glfw"
 import "external:wgpu"
 import "external:wgpu/glfwglue"
-
-import "raytracing2:bin/viewer/window"
 
 Renderer :: struct {
 	ctx:             runtime.Context,
@@ -27,7 +25,10 @@ Renderer :: struct {
 
 // TODO: We should possibly just take a surface here so that the renderer
 //       does not rely on GLFW directly?
-create :: proc(window_width, window_height: u32, raw_window: glfw.WindowHandle) -> ^Renderer {
+renderer_create :: proc(
+	window_width, window_height: u32,
+	raw_window: glfw.WindowHandle,
+) -> ^Renderer {
 	r := new(Renderer)
 	r.ctx = context
 	r.window_width = window_width
@@ -59,7 +60,7 @@ create :: proc(window_width, window_height: u32, raw_window: glfw.WindowHandle) 
 	return r
 }
 
-on_update :: proc(r: ^Renderer) {
+renderer_on_update :: proc(r: ^Renderer) {
 	// Get surface texture
 	surface_texture := wgpu.SurfaceGetCurrentTexture(r.surface)
 	switch surface_texture.status {
@@ -110,7 +111,7 @@ on_update :: proc(r: ^Renderer) {
 	wgpu.SurfacePresent(r.surface)
 }
 
-on_event :: proc(r: ^Renderer, event: window.Event) {
+renderer_on_event :: proc(r: ^Renderer, event: Event) {
 	#partial switch event.type {
 	case .WindowResize:
 		r.config.width, r.config.height = event.width, event.height
@@ -120,7 +121,7 @@ on_event :: proc(r: ^Renderer, event: window.Event) {
 	}
 }
 
-destroy :: proc(r: ^Renderer) {
+renderer_destroy :: proc(r: ^Renderer) {
 	wgpu.RenderPipelineRelease(r.pipeline)
 	wgpu.PipelineLayoutRelease(r.pipeline_layout)
 	wgpu.ShaderModuleRelease(r.module)
@@ -133,13 +134,13 @@ destroy :: proc(r: ^Renderer) {
 	free(r)
 }
 
-@(private)
+@(private = "file")
 log_callback :: proc "c" (level: wgpu.LogLevel, message: wgpu.StringView, userdata: rawptr) {
 	context = runtime.default_context()
 	log.infof("[WGPU Log] %v - %s", level, message)
 }
 
-@(private)
+@(private = "file")
 request_adapter_callback :: proc "c" (
 	status: wgpu.RequestAdapterStatus,
 	adapter: wgpu.Adapter,
@@ -162,7 +163,7 @@ request_adapter_callback :: proc "c" (
 	)
 }
 
-@(private)
+@(private = "file")
 request_device_callback :: proc "c" (
 	status: wgpu.RequestDeviceStatus,
 	device: wgpu.Device,
