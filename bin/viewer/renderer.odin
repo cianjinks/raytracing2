@@ -21,6 +21,7 @@ Renderer :: struct {
 	module:          wgpu.ShaderModule,
 	pipeline_layout: wgpu.PipelineLayout,
 	pipeline:        wgpu.RenderPipeline,
+	buffer:          wgpu.Buffer,
 }
 
 // TODO: We should possibly just take a surface here so that the renderer
@@ -98,7 +99,14 @@ renderer_on_update :: proc(r: ^Renderer) {
 	)
 
 	wgpu.RenderPassEncoderSetPipeline(render_pass, r.pipeline)
-	wgpu.RenderPassEncoderDraw(render_pass, 3, 1, 0, 0)
+	wgpu.RenderPassEncoderSetVertexBuffer(
+		render_pass,
+		0,
+		r.buffer,
+		0,
+		wgpu.BufferGetSize(r.buffer),
+	)
+	wgpu.RenderPassEncoderDraw(render_pass, 6, 2, 0, 0)
 
 	wgpu.RenderPassEncoderEnd(render_pass)
 	wgpu.RenderPassEncoderRelease(render_pass)
@@ -122,6 +130,7 @@ renderer_on_event :: proc(r: ^Renderer, event: Event) {
 }
 
 renderer_destroy :: proc(r: ^Renderer) {
+	wgpu.BufferRelease(r.buffer)
 	wgpu.RenderPipelineRelease(r.pipeline)
 	wgpu.PipelineLayoutRelease(r.pipeline_layout)
 	wgpu.ShaderModuleRelease(r.module)
@@ -202,6 +211,50 @@ request_device_callback :: proc "c" (
 		},
 	)
 
+	// 2 triangles with texture coordinates to make a quad
+	data := []f32 {
+		// top left
+		-1.0,
+		1.0,
+		0.0,
+		1.0,
+		// bottom left
+		-1.0,
+		-1.0,
+		0.0,
+		0.0,
+		// bottom right
+		1.0,
+		-1.0,
+		1.0,
+		0.0,
+		// top left
+		-1.0,
+		1.0,
+		0.0,
+		1.0,
+		// bottom right
+		1.0,
+		-1.0,
+		1.0,
+		0.0,
+		// top right
+		1.0,
+		1.0,
+		1.0,
+		1.0,
+	}
+	data_size := 24 * size_of(f32)
+	r.buffer = wgpu.DeviceCreateBuffer(
+		r.device,
+		&{usage = wgpu.BufferUsageFlags{.CopyDst, .Vertex}, size = u64(data_size)},
+	)
+	wgpu.QueueWriteBuffer(r.queue, r.buffer, 0, rawptr(&data[0]), uint(data_size))
+	buffer_attributes := []wgpu.VertexAttribute {
+		{format = .Float32x2, offset = 0, shaderLocation = 0},
+		{format = .Float32x2, offset = 2 * size_of(f32), shaderLocation = 1},
+	}
+
 	r.pipeline_layout = wgpu.DeviceCreatePipelineLayout(r.device, &{})
 	r.pipeline = wgpu.DeviceCreateRenderPipeline(
 		r.device,
@@ -210,8 +263,13 @@ request_device_callback :: proc "c" (
 			vertex = wgpu.VertexState {
 				module = r.module,
 				entryPoint = "vs_main",
-				bufferCount = 0,
-				buffers = nil,
+				bufferCount = 1,
+				buffers = &wgpu.VertexBufferLayout {
+					stepMode = .Vertex,
+					arrayStride = 4 * size_of(f32),
+					attributeCount = 2,
+					attributes = raw_data(buffer_attributes[:]),
+				},
 				constantCount = 0,
 				constants = nil,
 			},
@@ -241,4 +299,6 @@ request_device_callback :: proc "c" (
 			},
 		},
 	)
+
+
 }
