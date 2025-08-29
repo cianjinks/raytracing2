@@ -9,19 +9,23 @@ import "external:wgpu"
 import "external:wgpu/glfwglue"
 
 Renderer :: struct {
-	ctx:             runtime.Context,
-	window_width:    u32,
-	window_height:   u32,
-	instance:        wgpu.Instance,
-	surface:         wgpu.Surface,
-	adapter:         wgpu.Adapter,
-	device:          wgpu.Device,
-	config:          wgpu.SurfaceConfiguration,
-	queue:           wgpu.Queue,
-	module:          wgpu.ShaderModule,
-	pipeline_layout: wgpu.PipelineLayout,
-	pipeline:        wgpu.RenderPipeline,
-	buffer:          wgpu.Buffer,
+	ctx:              runtime.Context,
+	window_width:     u32,
+	window_height:    u32,
+	instance:         wgpu.Instance,
+	surface:          wgpu.Surface,
+	adapter:          wgpu.Adapter,
+	device:           wgpu.Device,
+	config:           wgpu.SurfaceConfiguration,
+	queue:            wgpu.Queue,
+	module:           wgpu.ShaderModule,
+	pipeline_layout:  wgpu.PipelineLayout,
+	pipeline:         wgpu.RenderPipeline,
+	buffer:           wgpu.Buffer,
+	texture:          wgpu.Texture,
+	texture_view:     wgpu.TextureView,
+	bindgroup_layout: wgpu.BindGroupLayout,
+	bindgroup:        wgpu.BindGroup,
 }
 
 // TODO: We should possibly just take a surface here so that the renderer
@@ -106,6 +110,7 @@ renderer_on_update :: proc(r: ^Renderer) {
 		0,
 		wgpu.BufferGetSize(r.buffer),
 	)
+	wgpu.RenderPassEncoderSetBindGroup(render_pass, 0, r.bindgroup)
 	wgpu.RenderPassEncoderDraw(render_pass, 6, 2, 0, 0)
 
 	wgpu.RenderPassEncoderEnd(render_pass)
@@ -130,6 +135,10 @@ renderer_on_event :: proc(r: ^Renderer, event: Event) {
 }
 
 renderer_destroy :: proc(r: ^Renderer) {
+	wgpu.BindGroupRelease(r.bindgroup)
+	wgpu.BindGroupLayoutRelease(r.bindgroup_layout)
+	wgpu.TextureViewRelease(r.texture_view)
+	wgpu.TextureRelease(r.texture)
 	wgpu.BufferRelease(r.buffer)
 	wgpu.RenderPipelineRelease(r.pipeline)
 	wgpu.PipelineLayoutRelease(r.pipeline_layout)
@@ -255,7 +264,87 @@ request_device_callback :: proc "c" (
 		{format = .Float32x2, offset = 2 * size_of(f32), shaderLocation = 1},
 	}
 
-	r.pipeline_layout = wgpu.DeviceCreatePipelineLayout(r.device, &{})
+	// a simple texture
+	r.texture = wgpu.DeviceCreateTexture(
+		r.device,
+		&{
+			usage = {.TextureBinding, .CopyDst},
+			dimension = ._2D,
+			size = {width = r.window_width, height = r.window_height, depthOrArrayLayers = 1},
+			format = .RGBA8Unorm,
+			mipLevelCount = 1,
+			sampleCount = 1,
+		},
+	)
+	r.texture_view = wgpu.TextureCreateView(
+		r.texture,
+		&{
+			format = .RGBA8Unorm,
+			dimension = ._2D,
+			baseMipLevel = 0,
+			mipLevelCount = 1,
+			baseArrayLayer = 0,
+			arrayLayerCount = 1,
+			aspect = .All,
+			usage = {.TextureBinding, .CopyDst},
+		},
+	)
+
+	texture_data := make([]u8, r.window_width * r.window_height * 4)
+	for x in 0 ..< r.window_width {
+		for y in 0 ..< r.window_height {
+			idx := ((x * r.window_height) + y) * 4
+			texture_data[idx] = 128
+			texture_data[idx + 1] = 128
+			texture_data[idx + 2] = 128
+			texture_data[idx + 3] = 255
+		}
+	}
+	wgpu.QueueWriteTexture(
+		r.queue,
+		destination = &{texture = r.texture, mipLevel = 0, origin = {0, 0, 0}, aspect = .All},
+		data = rawptr(&texture_data[0]),
+		dataSize = len(texture_data) * size_of(u8),
+		dataLayout = &{
+			offset = 0,
+			bytesPerRow = 4 * r.window_width,
+			rowsPerImage = r.window_height,
+		},
+		writeSize = &{r.window_width, r.window_height, 1},
+	)
+	delete(texture_data)
+
+
+	// bindings
+	bindgroup_layout_entries := []wgpu.BindGroupLayoutEntry {
+		{
+			binding = 0,
+			visibility = {.Fragment},
+			texture = {sampleType = .Float, viewDimension = ._2D},
+		},
+	}
+	r.bindgroup_layout = wgpu.DeviceCreateBindGroupLayout(
+		r.device,
+		&{
+			entryCount = len(bindgroup_layout_entries),
+			entries = raw_data(bindgroup_layout_entries[:]),
+		},
+	)
+	bindgroup_entries := []wgpu.BindGroupEntry{{binding = 0, textureView = r.texture_view}}
+	r.bindgroup = wgpu.DeviceCreateBindGroup(
+		r.device,
+		&{
+			layout = r.bindgroup_layout,
+			entryCount = len(bindgroup_entries),
+			entries = raw_data(bindgroup_entries[:]),
+		},
+	)
+
+	// pipeline
+	r.pipeline_layout = wgpu.DeviceCreatePipelineLayout(
+		r.device,
+		&{bindGroupLayoutCount = 1, bindGroupLayouts = &r.bindgroup_layout},
+	)
 	r.pipeline = wgpu.DeviceCreateRenderPipeline(
 		r.device,
 		&wgpu.RenderPipelineDescriptor {
@@ -267,7 +356,7 @@ request_device_callback :: proc "c" (
 				buffers = &wgpu.VertexBufferLayout {
 					stepMode = .Vertex,
 					arrayStride = 4 * size_of(f32),
-					attributeCount = 2,
+					attributeCount = len(buffer_attributes),
 					attributes = raw_data(buffer_attributes[:]),
 				},
 				constantCount = 0,
@@ -299,6 +388,4 @@ request_device_callback :: proc "c" (
 			},
 		},
 	)
-
-
 }

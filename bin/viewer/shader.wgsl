@@ -16,7 +16,9 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
+@group(0) @binding(0) var texture: texture_2d<f32>;
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-    return vec4f(0.0, 0.4, 1.0, 1.0);
+    let color = textureLoad(texture, vec2i(in.position.xy), 0).rgb;
+    return vec4f(color, 1.0);
 }
