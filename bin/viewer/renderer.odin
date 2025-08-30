@@ -8,6 +8,8 @@ import "external:glfw"
 import "external:wgpu"
 import "external:wgpu/glfwglue"
 
+import "raytracing2:lib/r2/util"
+
 Renderer :: struct {
 	ctx:              runtime.Context,
 	window_width:     u32,
@@ -24,6 +26,7 @@ Renderer :: struct {
 	buffer:           wgpu.Buffer,
 	texture:          wgpu.Texture,
 	texture_view:     wgpu.TextureView,
+	texture_sampler:  wgpu.Sampler,
 	bindgroup_layout: wgpu.BindGroupLayout,
 	bindgroup:        wgpu.BindGroup,
 }
@@ -137,6 +140,7 @@ renderer_on_event :: proc(r: ^Renderer, event: Event) {
 renderer_destroy :: proc(r: ^Renderer) {
 	wgpu.BindGroupRelease(r.bindgroup)
 	wgpu.BindGroupLayoutRelease(r.bindgroup_layout)
+	wgpu.SamplerRelease(r.texture_sampler)
 	wgpu.TextureViewRelease(r.texture_view)
 	wgpu.TextureRelease(r.texture)
 	wgpu.BufferRelease(r.buffer)
@@ -289,14 +293,30 @@ request_device_callback :: proc "c" (
 			usage = {.TextureBinding, .CopyDst},
 		},
 	)
+	r.texture_sampler = wgpu.DeviceCreateSampler(
+		r.device,
+		&{
+			addressModeU = .Repeat,
+			addressModeV = .Repeat,
+			addressModeW = .Repeat,
+			magFilter = .Nearest,
+			minFilter = .Nearest,
+			mipmapFilter = .Nearest,
+			lodMinClamp = 0.0,
+			lodMaxClamp = 1.0,
+			compare = .Undefined,
+			maxAnisotropy = 1,
+		},
+	)
 
 	texture_data := make([]u8, r.window_width * r.window_height * 4)
 	for x in 0 ..< r.window_width {
 		for y in 0 ..< r.window_height {
-			idx := ((x * r.window_height) + y) * 4
-			texture_data[idx] = 128
-			texture_data[idx + 1] = 128
-			texture_data[idx + 2] = 128
+			idx := ((y * r.window_width) + x) * 4
+			seed := idx
+			texture_data[idx] = u8(util.fast_random(&seed))
+			texture_data[idx + 1] = u8(util.fast_random(&seed))
+			texture_data[idx + 2] = u8(util.fast_random(&seed))
 			texture_data[idx + 3] = 255
 		}
 	}
@@ -322,6 +342,7 @@ request_device_callback :: proc "c" (
 			visibility = {.Fragment},
 			texture = {sampleType = .Float, viewDimension = ._2D},
 		},
+		{binding = 1, visibility = {.Fragment}, sampler = {type = .Filtering}},
 	}
 	r.bindgroup_layout = wgpu.DeviceCreateBindGroupLayout(
 		r.device,
@@ -330,7 +351,10 @@ request_device_callback :: proc "c" (
 			entries = raw_data(bindgroup_layout_entries[:]),
 		},
 	)
-	bindgroup_entries := []wgpu.BindGroupEntry{{binding = 0, textureView = r.texture_view}}
+	bindgroup_entries := []wgpu.BindGroupEntry {
+		{binding = 0, textureView = r.texture_view},
+		{binding = 1, sampler = r.texture_sampler},
+	}
 	r.bindgroup = wgpu.DeviceCreateBindGroup(
 		r.device,
 		&{

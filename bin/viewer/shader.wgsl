@@ -17,8 +17,9 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 }
 
 @group(0) @binding(0) var texture: texture_2d<f32>;
+@group(0) @binding(1) var textureSampler: sampler;
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-    let color = textureLoad(texture, vec2i(in.position.xy), 0).rgb;
-    return vec4f(color, 1.0);
+    return textureSample(texture, textureSampler, in.texture_coord);
 }
