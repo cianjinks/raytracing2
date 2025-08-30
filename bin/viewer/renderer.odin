@@ -24,12 +24,10 @@ Renderer :: struct {
 	pipeline_layout:  wgpu.PipelineLayout,
 	pipeline:         wgpu.RenderPipeline,
 	buffer:           wgpu.Buffer,
-	texture:          wgpu.Texture,
-	texture_view:     wgpu.TextureView,
-	texture_sampler:  wgpu.Sampler,
 	bindgroup_layout: wgpu.BindGroupLayout,
-	bindgroup:        wgpu.BindGroup,
 }
+
+// A simple texture renderer
 
 // TODO: We should possibly just take a surface here so that the renderer
 //       does not rely on GLFW directly?
@@ -68,7 +66,11 @@ renderer_create :: proc(
 	return r
 }
 
-renderer_on_update :: proc(r: ^Renderer) {
+renderer_on_update :: proc(
+	r: ^Renderer,
+	texture_view: wgpu.TextureView,
+	texture_sampler: wgpu.Sampler,
+) {
 	// Get surface texture
 	surface_texture := wgpu.SurfaceGetCurrentTexture(r.surface)
 	switch surface_texture.status {
@@ -84,6 +86,23 @@ renderer_on_update :: proc(r: ^Renderer) {
 	// Create view for surface texture (with defaults)
 	view := wgpu.TextureCreateView(surface_texture.texture, nil)
 	defer wgpu.TextureViewRelease(view)
+
+	// Create bindgroup
+	// NOTE: We do this every frame because we expect to dyanmically resize our texture and don't want to bother
+	//       trying to lazily evalute it.
+	bindgroup_entries := []wgpu.BindGroupEntry {
+		{binding = 0, textureView = texture_view},
+		{binding = 1, sampler = texture_sampler},
+	}
+	bindgroup := wgpu.DeviceCreateBindGroup(
+		r.device,
+		&{
+			layout = r.bindgroup_layout,
+			entryCount = len(bindgroup_entries),
+			entries = raw_data(bindgroup_entries[:]),
+		},
+	)
+	defer wgpu.BindGroupRelease(bindgroup)
 
 	// Create command encoder (with defaults)
 	encoder := wgpu.DeviceCreateCommandEncoder(r.device, nil)
@@ -113,7 +132,7 @@ renderer_on_update :: proc(r: ^Renderer) {
 		0,
 		wgpu.BufferGetSize(r.buffer),
 	)
-	wgpu.RenderPassEncoderSetBindGroup(render_pass, 0, r.bindgroup)
+	wgpu.RenderPassEncoderSetBindGroup(render_pass, 0, bindgroup)
 	wgpu.RenderPassEncoderDraw(render_pass, 6, 2, 0, 0)
 
 	wgpu.RenderPassEncoderEnd(render_pass)
@@ -138,11 +157,7 @@ renderer_on_event :: proc(r: ^Renderer, event: Event) {
 }
 
 renderer_destroy :: proc(r: ^Renderer) {
-	wgpu.BindGroupRelease(r.bindgroup)
 	wgpu.BindGroupLayoutRelease(r.bindgroup_layout)
-	wgpu.SamplerRelease(r.texture_sampler)
-	wgpu.TextureViewRelease(r.texture_view)
-	wgpu.TextureRelease(r.texture)
 	wgpu.BufferRelease(r.buffer)
 	wgpu.RenderPipelineRelease(r.pipeline)
 	wgpu.PipelineLayoutRelease(r.pipeline_layout)
@@ -268,73 +283,6 @@ request_device_callback :: proc "c" (
 		{format = .Float32x2, offset = 2 * size_of(f32), shaderLocation = 1},
 	}
 
-	// a simple texture
-	r.texture = wgpu.DeviceCreateTexture(
-		r.device,
-		&{
-			usage = {.TextureBinding, .CopyDst},
-			dimension = ._2D,
-			size = {width = r.window_width, height = r.window_height, depthOrArrayLayers = 1},
-			format = .RGBA8Unorm,
-			mipLevelCount = 1,
-			sampleCount = 1,
-		},
-	)
-	r.texture_view = wgpu.TextureCreateView(
-		r.texture,
-		&{
-			format = .RGBA8Unorm,
-			dimension = ._2D,
-			baseMipLevel = 0,
-			mipLevelCount = 1,
-			baseArrayLayer = 0,
-			arrayLayerCount = 1,
-			aspect = .All,
-			usage = {.TextureBinding, .CopyDst},
-		},
-	)
-	r.texture_sampler = wgpu.DeviceCreateSampler(
-		r.device,
-		&{
-			addressModeU = .Repeat,
-			addressModeV = .Repeat,
-			addressModeW = .Repeat,
-			magFilter = .Nearest,
-			minFilter = .Nearest,
-			mipmapFilter = .Nearest,
-			lodMinClamp = 0.0,
-			lodMaxClamp = 1.0,
-			compare = .Undefined,
-			maxAnisotropy = 1,
-		},
-	)
-
-	texture_data := make([]u8, r.window_width * r.window_height * 4)
-	for x in 0 ..< r.window_width {
-		for y in 0 ..< r.window_height {
-			idx := ((y * r.window_width) + x) * 4
-			seed := idx
-			texture_data[idx] = u8(util.fast_random(&seed))
-			texture_data[idx + 1] = u8(util.fast_random(&seed))
-			texture_data[idx + 2] = u8(util.fast_random(&seed))
-			texture_data[idx + 3] = 255
-		}
-	}
-	wgpu.QueueWriteTexture(
-		r.queue,
-		destination = &{texture = r.texture, mipLevel = 0, origin = {0, 0, 0}, aspect = .All},
-		data = rawptr(&texture_data[0]),
-		dataSize = len(texture_data) * size_of(u8),
-		dataLayout = &{
-			offset = 0,
-			bytesPerRow = 4 * r.window_width,
-			rowsPerImage = r.window_height,
-		},
-		writeSize = &{r.window_width, r.window_height, 1},
-	)
-	delete(texture_data)
-
-
 	// bindings
 	bindgroup_layout_entries := []wgpu.BindGroupLayoutEntry {
 		{
@@ -349,18 +297,6 @@ request_device_callback :: proc "c" (
 		&{
 			entryCount = len(bindgroup_layout_entries),
 			entries = raw_data(bindgroup_layout_entries[:]),
-		},
-	)
-	bindgroup_entries := []wgpu.BindGroupEntry {
-		{binding = 0, textureView = r.texture_view},
-		{binding = 1, sampler = r.texture_sampler},
-	}
-	r.bindgroup = wgpu.DeviceCreateBindGroup(
-		r.device,
-		&{
-			layout = r.bindgroup_layout,
-			entryCount = len(bindgroup_entries),
-			entries = raw_data(bindgroup_entries[:]),
 		},
 	)
 
@@ -412,4 +348,9 @@ request_device_callback :: proc "c" (
 			},
 		},
 	)
+}
+
+@(private = "file")
+recreate_bindgroup :: proc(texture_view: wgpu.TextureView, texture_sampler: wgpu.Sampler) {
+
 }
