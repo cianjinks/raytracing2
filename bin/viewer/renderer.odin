@@ -349,8 +349,3 @@ request_device_callback :: proc "c" (
 		},
 	)
 }
-
-@(private = "file")
-recreate_bindgroup :: proc(texture_view: wgpu.TextureView, texture_sampler: wgpu.Sampler) {
-
-}

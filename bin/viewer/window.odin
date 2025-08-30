@@ -66,6 +66,7 @@ window_create :: proc(
 	glfw.SetMouseButtonCallback(w.raw_window, mouse_button_callback)
 	glfw.SetCursorPosCallback(w.raw_window, cursor_pos_callback)
 	glfw.SetScrollCallback(w.raw_window, scroll_callback)
+	glfw.SetCharCallback(w.raw_window, char_callback)
 
 	return w
 }
@@ -119,9 +120,50 @@ key_callback :: proc "c" (window: glfw.WindowHandle, key, scancode, action, mods
 		type = .KeyRepeat
 	}
 
+	// TODO: Add more as needed
+	event_key := EventKey.None
+	switch key {
+	case (glfw.KEY_LEFT_SHIFT | glfw.KEY_RIGHT_SHIFT):
+		event_key = .SHIFT
+	case (glfw.KEY_LEFT_CONTROL | glfw.KEY_RIGHT_CONTROL):
+		event_key = .CTRL
+	case (glfw.KEY_LEFT_ALT | glfw.KEY_RIGHT_ALT):
+		event_key = .ALT
+	case glfw.KEY_BACKSPACE:
+		event_key = .BACKSPACE
+	case glfw.KEY_DELETE:
+		event_key = .DELETE
+	case glfw.KEY_ENTER:
+		event_key = .RETURN
+	case glfw.KEY_LEFT:
+		event_key = .LEFT
+	case glfw.KEY_RIGHT:
+		event_key = .RIGHT
+	case glfw.KEY_HOME:
+		event_key = .HOME
+	case glfw.KEY_END:
+		event_key = .END
+	case glfw.KEY_A:
+		event_key = .A
+	case glfw.KEY_C:
+		event_key = .C
+	case glfw.KEY_D:
+		event_key = .D
+	case glfw.KEY_W:
+		event_key = .W
+	case glfw.KEY_S:
+		event_key = .S
+	case glfw.KEY_V:
+		event_key = .V
+	case glfw.KEY_X:
+		event_key = .X
+	case:
+		log.warnf("[GLFW Warn] unsupported key press: %d", key)
+	}
+
 	event := Event {
 		type = type,
-		key  = key,
+		key  = event_key,
 	}
 	user_data.callback(event, user_data.callback_user_data)
 }
@@ -139,9 +181,21 @@ mouse_button_callback :: proc "c" (window: glfw.WindowHandle, button, action, mo
 		type = .MouseRelease
 	}
 
+	event_mouse_button := EventMouseButton.None
+	switch button {
+	case glfw.MOUSE_BUTTON_LEFT:
+		event_mouse_button = .Left
+	case glfw.MOUSE_BUTTON_RIGHT:
+		event_mouse_button = .Right
+	case glfw.MOUSE_BUTTON_MIDDLE:
+		event_mouse_button = .Middle
+	case:
+		log.warnf("[GLFW Warn] unsupported mouse button press: %d", button)
+	}
+
 	event := Event {
 		type   = type,
-		button = button,
+		button = event_mouse_button,
 	}
 	user_data.callback(event, user_data.callback_user_data)
 }
@@ -168,6 +222,18 @@ scroll_callback :: proc "c" (window: glfw.WindowHandle, xoffset, yoffset: f64) {
 		type    = .MouseScroll,
 		xoffset = xoffset,
 		yoffset = yoffset,
+	}
+	user_data.callback(event, user_data.callback_user_data)
+}
+
+@(private = "file")
+char_callback :: proc "c" (window: glfw.WindowHandle, codepoint: rune) {
+	user_data := (^WindowUserPointer)(glfw.GetWindowUserPointer(window))
+	context = user_data.ctx
+
+	event := Event {
+		type      = .TextInput,
+		codepoint = codepoint,
 	}
 	user_data.callback(event, user_data.callback_user_data)
 }
