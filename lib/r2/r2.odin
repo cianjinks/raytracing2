@@ -99,6 +99,7 @@ recreate_texture :: proc(r: ^R2) {
 	// create view and sampler for use
 	r.texture_view = wgpu.TextureCreateView(
 		r._texture,
+		// TODO: Could be nil since we don't want to provide a different view than the texture format?
 		&{
 			format = .RGBA8Unorm,
 			dimension = ._2D,

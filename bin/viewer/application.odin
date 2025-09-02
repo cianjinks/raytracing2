@@ -36,10 +36,12 @@ app_create :: proc(name: string, window_width: u32, window_height: u32) -> ^Appl
 app_run :: proc(a: ^Application) {
 	for !window_should_close(a.window) {
 		window_on_update()
+
 		ui_begin(a.ui)
 		app_ui(a)
 		ui_end(a.ui)
-		renderer_on_update(a.renderer, a.r2.texture_view, a.r2.texture_sampler)
+
+		renderer_render(a.renderer, a.r2.texture_view, a.r2.texture_sampler, &a.ui.ctx)
 	}
 }
 
