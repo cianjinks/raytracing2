@@ -22,7 +22,12 @@ app_create :: proc(name: string, window_width: u32, window_height: u32) -> ^Appl
 	// create application
 	a := new(Application)
 	a.window = window_create(name, window_width, window_height, app_on_event, rawptr(a))
-	a.renderer = renderer_create(window_width, window_height, a.window.raw_window)
+	a.renderer = renderer_create(
+		window_width,
+		window_height,
+		window_get_dpi(a.window),
+		a.window.raw_window,
+	)
 	a.ui = ui_create()
 	a.r2 = r2.init(
 		image_width = window_width,

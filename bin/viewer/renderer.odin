@@ -1,8 +1,10 @@
 package viewer
 
+
 import "base:runtime"
 
 import "core:log"
+import "core:math/linalg"
 
 import "external:glfw"
 import "external:microui"
@@ -15,6 +17,7 @@ Renderer :: struct {
 	ctx:                      runtime.Context,
 	window_width:             u32,
 	window_height:            u32,
+	window_dpi:               f32,
 
 	// create
 	instance:                 wgpu.Instance,
@@ -32,13 +35,17 @@ Renderer :: struct {
 	texture_bindgroup_layout: wgpu.BindGroupLayout,
 
 	// microui rendering
+	ui_cpu_vertex_buffer:     [VERT_PER_QUAD * MAX_QUAD_COUNT]f32,
+	ui_cpu_tex_buffer:        [TEX_PER_QUAD * MAX_QUAD_COUNT]f32,
+	ui_cpu_color_buffer:      [COLOR_PER_QUAD * MAX_QUAD_COUNT]u8,
+	ui_cpu_index_buffer:      [INDEX_PER_QUAD * MAX_QUAD_COUNT]u32,
 	ui_shader:                wgpu.ShaderModule,
 	ui_atlas_texture:         wgpu.Texture,
 	ui_atlas_texture_view:    wgpu.TextureView,
 	ui_sampler:               wgpu.Sampler,
 	ui_transform_matrix:      wgpu.Buffer,
-	ui_tex_buffer:            wgpu.Buffer,
 	ui_vertex_buffer:         wgpu.Buffer,
+	ui_tex_buffer:            wgpu.Buffer,
 	ui_color_buffer:          wgpu.Buffer,
 	ui_index_buffer:          wgpu.Buffer,
 	ui_bindgroup_layout:      wgpu.BindGroupLayout,
@@ -51,7 +58,12 @@ Renderer :: struct {
 	curr_surface_view:        wgpu.TextureView,
 }
 
-UI_BUFFER_SIZE :: 16384
+MAX_QUAD_COUNT :: 16384
+// for a 2d quad
+VERT_PER_QUAD :: 8
+TEX_PER_QUAD :: 8
+COLOR_PER_QUAD :: 16
+INDEX_PER_QUAD :: 6
 
 // A simple texture renderer
 
@@ -59,12 +71,14 @@ UI_BUFFER_SIZE :: 16384
 //       does not rely on GLFW directly?
 renderer_create :: proc(
 	window_width, window_height: u32,
+	window_dpi: f32,
 	raw_window: glfw.WindowHandle,
 ) -> ^Renderer {
 	r := new(Renderer)
 	r.ctx = context
 	r.window_width = window_width
 	r.window_height = window_height
+	r.window_dpi = window_dpi
 
 	wgpu.SetLogCallback(log_callback, nil)
 
@@ -109,17 +123,36 @@ renderer_on_event :: proc(r: ^Renderer, event: Event) {
 	case .WindowResize:
 		r.config.width, r.config.height = event.width, event.height
 		wgpu.SurfaceConfigure(r.surface, &r.config)
+		renderer_update_ui_transform(r)
 	case:
 	// Ignore
 	}
 }
 
 renderer_destroy :: proc(r: ^Renderer) {
+	// ui rendering
+	wgpu.RenderPipelineRelease(r.ui_pipeline)
+	wgpu.PipelineLayoutRelease(r.ui_pipeline_layout)
+	wgpu.BindGroupRelease(r.ui_bindgroup)
+	wgpu.BindGroupLayoutRelease(r.ui_bindgroup_layout)
+	wgpu.BufferRelease(r.ui_index_buffer)
+	wgpu.BufferRelease(r.ui_color_buffer)
+	wgpu.BufferRelease(r.ui_tex_buffer)
+	wgpu.BufferRelease(r.ui_vertex_buffer)
+	wgpu.BufferRelease(r.ui_transform_matrix)
+	wgpu.SamplerRelease(r.ui_sampler)
+	wgpu.TextureViewRelease(r.ui_atlas_texture_view)
+	wgpu.TextureRelease(r.ui_atlas_texture)
+	wgpu.ShaderModuleRelease(r.ui_shader)
+
+	// texture rendering
 	wgpu.BindGroupLayoutRelease(r.texture_bindgroup_layout)
 	wgpu.BufferRelease(r.texture_quad_buffer)
 	wgpu.RenderPipelineRelease(r.texture_pipeline)
 	wgpu.PipelineLayoutRelease(r.texture_pipeline_layout)
 	wgpu.ShaderModuleRelease(r.texture_shader)
+
+	// general
 	wgpu.SurfaceUnconfigure(r.surface)
 	wgpu.QueueRelease(r.queue)
 	wgpu.DeviceRelease(r.device)
@@ -284,7 +317,21 @@ renderer_end :: proc(r: ^Renderer) {
 
 @(private = "file")
 renderer_render_microui :: proc(r: ^Renderer, ctx: ^microui.Context) {
-	for variant in microui.next_command_iterator(ctx, nil) {
+	// Every micro UI object can be rendered with quads, so to render
+	// the UI we do the following:
+	// 
+	//  - Loop over each UI object to render
+	//    - If the CPU side buffers are full
+	//      - Flush to GPU + render
+	//    - Write the appropriate quad data to the CPU side buffers
+	//      - vertices, indices, texture coords, color
+	//  - Flush any remaining CPU data to GPU + render 
+	// 
+
+	curr_quad_index := 0
+
+	command_backing: ^microui.Command
+	for variant in microui.next_command_iterator(ctx, &command_backing) {
 		switch cmd in variant {
 		case ^microui.Command_Text: // TODO
 		case ^microui.Command_Rect: // TODO
@@ -294,6 +341,129 @@ renderer_render_microui :: proc(r: ^Renderer, ctx: ^microui.Context) {
 			unreachable()
 		}
 	}
+
+	renderer_flush_quads(r, &curr_quad_index)
+}
+
+@(private = "file")
+renderer_push_quad :: proc(r: ^Renderer, curr_quad_index: ^int) {
+	if curr_quad_index^ == MAX_QUAD_COUNT {
+		renderer_flush_quads(r, curr_quad_index)
+	}
+
+	// TODO
+	// (curr_quad_index^) += 1
+}
+
+@(private = "file")
+renderer_flush_quads :: proc(r: ^Renderer, curr_quad_index: ^int) {
+	if (curr_quad_index^ == 0) {
+		return
+	}
+
+	// reset index to allow more quads to be pushed
+	(curr_quad_index^) = 0
+
+	encoder := wgpu.DeviceCreateCommandEncoder(r.device, nil)
+	defer wgpu.CommandEncoderRelease(encoder)
+
+	render_pass := wgpu.CommandEncoderBeginRenderPass(
+		encoder,
+		&wgpu.RenderPassDescriptor {
+			colorAttachmentCount = 1,
+			colorAttachments = &wgpu.RenderPassColorAttachment {
+				view = r.curr_surface_view,
+				loadOp = .Load,
+				storeOp = .Store,
+			},
+		},
+	)
+
+	wgpu.RenderPassEncoderSetPipeline(render_pass, r.ui_pipeline)
+	wgpu.RenderPassEncoderSetBindGroup(render_pass, 0, r.ui_bindgroup)
+	wgpu.RenderPassEncoderSetVertexBuffer(
+		render_pass,
+		0,
+		r.ui_vertex_buffer,
+		0,
+		size_of(r.ui_cpu_vertex_buffer),
+	)
+	wgpu.RenderPassEncoderSetVertexBuffer(
+		render_pass,
+		0,
+		r.ui_tex_buffer,
+		0,
+		size_of(r.ui_cpu_tex_buffer),
+	)
+	wgpu.RenderPassEncoderSetVertexBuffer(
+		render_pass,
+		0,
+		r.ui_color_buffer,
+		0,
+		size_of(r.ui_cpu_color_buffer),
+	)
+	wgpu.RenderPassEncoderSetIndexBuffer(
+		render_pass,
+		r.ui_index_buffer,
+		.Uint32,
+		0,
+		size_of(r.ui_cpu_index_buffer),
+	)
+
+	wgpu.QueueWriteBuffer(
+		r.queue,
+		r.ui_vertex_buffer,
+		0,
+		&r.ui_cpu_vertex_buffer,
+		uint(curr_quad_index^ * VERT_PER_QUAD * size_of(f32)),
+	)
+	wgpu.QueueWriteBuffer(
+		r.queue,
+		r.ui_tex_buffer,
+		0,
+		&r.ui_cpu_tex_buffer,
+		uint(curr_quad_index^ * TEX_PER_QUAD * size_of(f32)),
+	)
+	wgpu.QueueWriteBuffer(
+		r.queue,
+		r.ui_color_buffer,
+		0,
+		&r.ui_cpu_color_buffer,
+		uint(curr_quad_index^ * COLOR_PER_QUAD * size_of(u8)),
+	)
+	wgpu.QueueWriteBuffer(
+		r.queue,
+		r.ui_index_buffer,
+		0,
+		&r.ui_cpu_index_buffer,
+		uint(curr_quad_index^ * INDEX_PER_QUAD * size_of(u32)),
+	)
+
+	wgpu.RenderPassEncoderDrawIndexed(
+		render_pass,
+		u32(curr_quad_index^ * INDEX_PER_QUAD),
+		1,
+		0,
+		0,
+		0,
+	)
+
+	wgpu.RenderPassEncoderEnd(render_pass)
+	wgpu.RenderPassEncoderRelease(render_pass)
+
+	command_buffer := wgpu.CommandEncoderFinish(encoder, nil)
+	defer wgpu.CommandBufferRelease(command_buffer)
+
+	wgpu.QueueSubmit(r.queue, {command_buffer})
+
+}
+
+@(private = "file")
+renderer_update_ui_transform :: proc(r: ^Renderer) {
+	transform :=
+		linalg.matrix_ortho3d(0, f32(r.config.width), f32(r.config.height), 0, -1, 1) *
+		linalg.matrix4_scale(r.window_dpi)
+	wgpu.QueueWriteBuffer(r.queue, r.ui_transform_matrix, 0, &transform, size_of(transform))
 }
 
 @(private = "file")
@@ -477,7 +647,7 @@ renderer_setup_ui_objects :: proc(r: ^Renderer) {
 		&{
 			label = "Vertex Buffer",
 			usage = {.Vertex, .CopyDst},
-			size = 8 * UI_BUFFER_SIZE * size_of(f32),
+			size = VERT_PER_QUAD * MAX_QUAD_COUNT * size_of(f32),
 		},
 	)
 	r.ui_tex_buffer = wgpu.DeviceCreateBuffer(
@@ -485,7 +655,7 @@ renderer_setup_ui_objects :: proc(r: ^Renderer) {
 		&{
 			label = "Texture Buffer",
 			usage = {.Vertex, .CopyDst},
-			size = 8 * UI_BUFFER_SIZE * size_of(f32),
+			size = TEX_PER_QUAD * MAX_QUAD_COUNT * size_of(f32),
 		},
 	)
 	r.ui_color_buffer = wgpu.DeviceCreateBuffer(
@@ -493,7 +663,7 @@ renderer_setup_ui_objects :: proc(r: ^Renderer) {
 		&{
 			label = "Color Buffer",
 			usage = {.Vertex, .CopyDst},
-			size = 16 * UI_BUFFER_SIZE * size_of(u8),
+			size = COLOR_PER_QUAD * MAX_QUAD_COUNT * size_of(u8),
 		},
 	)
 	r.ui_index_buffer = wgpu.DeviceCreateBuffer(
@@ -501,7 +671,7 @@ renderer_setup_ui_objects :: proc(r: ^Renderer) {
 		&{
 			label = "Index Buffer",
 			usage = {.Index, .CopyDst},
-			size = 6 * UI_BUFFER_SIZE * size_of(u32),
+			size = INDEX_PER_QUAD * MAX_QUAD_COUNT * size_of(u32),
 		},
 	)
 

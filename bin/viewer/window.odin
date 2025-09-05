@@ -86,6 +86,14 @@ window_destroy :: proc(w: ^Window) {
 	glfw.Terminate()
 }
 
+window_get_dpi :: proc(w: ^Window) -> f32 {
+	xs, ys := glfw.GetWindowContentScale(w.raw_window)
+	if xs != ys {
+		log.warnf("[GLFW Warn] content scale is different in X and Y: %f, %f", xs, ys)
+	}
+	return xs
+}
+
 @(private = "file")
 error_callback :: proc "c" (error: c.int, description: cstring) {
 	context = runtime.default_context()
