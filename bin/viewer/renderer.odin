@@ -334,7 +334,14 @@ renderer_render_microui :: proc(r: ^Renderer, ctx: ^microui.Context) {
 	for variant in microui.next_command_iterator(ctx, &command_backing) {
 		switch cmd in variant {
 		case ^microui.Command_Text: // TODO
-		case ^microui.Command_Rect: // TODO
+		case ^microui.Command_Rect:
+			renderer_push_quad(
+				r,
+				&curr_quad_index,
+				cmd.rect,
+				microui.default_atlas[microui.DEFAULT_ATLAS_WHITE],
+				cmd.color,
+			)
 		case ^microui.Command_Icon: // TODO
 		case ^microui.Command_Clip: // TODO
 		case ^microui.Command_Jump:
@@ -346,13 +353,59 @@ renderer_render_microui :: proc(r: ^Renderer, ctx: ^microui.Context) {
 }
 
 @(private = "file")
-renderer_push_quad :: proc(r: ^Renderer, curr_quad_index: ^int) {
+renderer_push_quad :: proc(
+	r: ^Renderer,
+	curr_quad_index: ^int,
+	quad: microui.Rect, // the coords of the quad in screen space
+	atlas_quad: microui.Rect, // the coords of a texture in the default texture atlas to apply to the quad
+	color: microui.Color,
+) {
 	if curr_quad_index^ == MAX_QUAD_COUNT {
 		renderer_flush_quads(r, curr_quad_index)
 	}
 
-	// TODO
-	// (curr_quad_index^) += 1
+	// vertex coords
+	vx := f32(quad.x)
+	vy := f32(quad.y)
+	vw := f32(quad.w)
+	vh := f32(quad.h)
+	copy(
+		r.ui_cpu_vertex_buffer[curr_quad_index^ * VERT_PER_QUAD:],
+		[]f32{vx, vy, vx + vw, vy, vx, vy + vh, vx + vw, vy + vh},
+	)
+
+	// normalize the atlas coords to the range 0 -> 1 to use as texture coords
+	tx := f32(atlas_quad.x) / microui.DEFAULT_ATLAS_WIDTH
+	ty := f32(atlas_quad.y) / microui.DEFAULT_ATLAS_HEIGHT
+	tw := f32(atlas_quad.w) / microui.DEFAULT_ATLAS_WIDTH
+	th := f32(atlas_quad.h) / microui.DEFAULT_ATLAS_HEIGHT
+	copy(
+		r.ui_cpu_tex_buffer[curr_quad_index^ * TEX_PER_QUAD:],
+		[]f32{tx, ty, tx + tw, ty, tx, ty + th, tx + tw, ty + th},
+	)
+
+	// colors
+	c := color
+	copy(
+		r.ui_cpu_color_buffer[curr_quad_index^ * COLOR_PER_QUAD:],
+		[]u8{c.r, c.g, c.b, c.a, c.r, c.g, c.b, c.a, c.r, c.g, c.b, c.a, c.r, c.g, c.b, c.a},
+	)
+
+	// indices
+	index_index := u32(curr_quad_index^ * 4)
+	copy(
+		r.ui_cpu_index_buffer[curr_quad_index^ * INDEX_PER_QUAD:],
+		[]u32 {
+			index_index + 0,
+			index_index + 1,
+			index_index + 2,
+			index_index + 2,
+			index_index + 3,
+			index_index + 1,
+		},
+	)
+
+	(curr_quad_index^) += 1
 }
 
 @(private = "file")
@@ -360,9 +413,6 @@ renderer_flush_quads :: proc(r: ^Renderer, curr_quad_index: ^int) {
 	if (curr_quad_index^ == 0) {
 		return
 	}
-
-	// reset index to allow more quads to be pushed
-	(curr_quad_index^) = 0
 
 	encoder := wgpu.DeviceCreateCommandEncoder(r.device, nil)
 	defer wgpu.CommandEncoderRelease(encoder)
@@ -390,14 +440,14 @@ renderer_flush_quads :: proc(r: ^Renderer, curr_quad_index: ^int) {
 	)
 	wgpu.RenderPassEncoderSetVertexBuffer(
 		render_pass,
-		0,
+		1,
 		r.ui_tex_buffer,
 		0,
 		size_of(r.ui_cpu_tex_buffer),
 	)
 	wgpu.RenderPassEncoderSetVertexBuffer(
 		render_pass,
-		0,
+		2,
 		r.ui_color_buffer,
 		0,
 		size_of(r.ui_cpu_color_buffer),
@@ -456,6 +506,8 @@ renderer_flush_quads :: proc(r: ^Renderer, curr_quad_index: ^int) {
 
 	wgpu.QueueSubmit(r.queue, {command_buffer})
 
+	// reset index to allow more quads to be pushed
+	(curr_quad_index^) = 0
 }
 
 @(private = "file")
