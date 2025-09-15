@@ -25,5 +25,12 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-    return textureSample(texture, textureSampler, in.texture_coord);
+    // the microui default atlas just contains alpha
+    // we use the vertex color for rgb channels
+    let texColor = textureSample(texture, textureSampler, in.texture_coord);
+    let a = texColor.r * f32((in.color >> 24) & 0xffu) / 255;
+    let b = f32((in.color >> 16) & 0xffu) / 255;
+    let g = f32((in.color >> 8) & 0xffu) / 255;
+    let r = f32(in.color & 0xffu) / 255;
+    return vec4f(r, g, b, a);
 }

@@ -16,6 +16,8 @@ Event :: struct {
 	xoffset, yoffset: f64,
 	// type = TextInput
 	codepoint:        rune,
+	// type = WindowDpi
+	dpi:              f32,
 }
 
 EventType :: enum {
@@ -29,6 +31,7 @@ EventType :: enum {
 	MouseScroll,
 	TextInput,
 	WindowResize,
+	WindowDpi,
 }
 
 EventKey :: enum {

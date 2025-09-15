@@ -124,7 +124,9 @@ renderer_on_event :: proc(r: ^Renderer, event: Event) {
 		r.config.width, r.config.height = event.width, event.height
 		wgpu.SurfaceConfigure(r.surface, &r.config)
 		renderer_update_ui_transform(r)
-	case:
+	case .WindowDpi:
+		r.window_dpi = event.dpi
+		renderer_update_ui_transform(r)
 	// Ignore
 	}
 }
@@ -333,7 +335,20 @@ renderer_render_microui :: proc(r: ^Renderer, ctx: ^microui.Context) {
 	command_backing: ^microui.Command
 	for variant in microui.next_command_iterator(ctx, &command_backing) {
 		switch cmd in variant {
-		case ^microui.Command_Text: // TODO
+		case ^microui.Command_Text:
+			// for text we create a quad for each character
+			quad := microui.Rect{cmd.pos.x, cmd.pos.y, 0, 0}
+			for ch in cmd.str {
+				if ch & 0xC0 != 0x80 {
+					offset := min(int(ch), 127)
+					atlas_quad := microui.default_atlas[microui.DEFAULT_ATLAS_FONT + offset]
+					quad.w = atlas_quad.w
+					quad.h = atlas_quad.h
+					renderer_push_quad(r, &curr_quad_index, quad, atlas_quad, cmd.color)
+					// move quad for next character
+					quad.x += quad.w
+				}
+			}
 		case ^microui.Command_Rect:
 			renderer_push_quad(
 				r,

@@ -67,6 +67,7 @@ window_create :: proc(
 	glfw.SetCursorPosCallback(w.raw_window, cursor_pos_callback)
 	glfw.SetScrollCallback(w.raw_window, scroll_callback)
 	glfw.SetCharCallback(w.raw_window, char_callback)
+	glfw.SetWindowContentScaleCallback(w.raw_window, content_scale_callback)
 
 	return w
 }
@@ -242,6 +243,22 @@ char_callback :: proc "c" (window: glfw.WindowHandle, codepoint: rune) {
 	event := Event {
 		type      = .TextInput,
 		codepoint = codepoint,
+	}
+	user_data.callback(event, user_data.callback_user_data)
+}
+
+@(private = "file")
+content_scale_callback :: proc "c" (window: glfw.WindowHandle, xscale, yscale: f32) {
+	user_data := (^WindowUserPointer)(glfw.GetWindowUserPointer(window))
+	context = user_data.ctx
+
+	if xscale != yscale {
+		log.warnf("[GLFW Warn] content scale is different in X and Y: %f, %f", xscale, yscale)
+	}
+
+	event := Event {
+		type = .WindowDpi,
+		dpi  = xscale,
 	}
 	user_data.callback(event, user_data.callback_user_data)
 }
