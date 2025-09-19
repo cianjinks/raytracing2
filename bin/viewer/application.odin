@@ -5,6 +5,7 @@ import "core:log"
 import "core:mem"
 
 import "external:microui"
+import "external:tracy"
 
 import "raytracing2:lib/r2"
 
@@ -18,6 +19,9 @@ Application :: struct {
 app_create :: proc(name: string, window_width: u32, window_height: u32) -> ^Application {
 	// init logging
 	context.logger = log.create_console_logger()
+
+	// init tracing
+	tracy.SetThreadName("main")
 
 	// create application
 	a := new(Application)
@@ -40,6 +44,8 @@ app_create :: proc(name: string, window_width: u32, window_height: u32) -> ^Appl
 
 app_run :: proc(a: ^Application) {
 	for !window_should_close(a.window) {
+		defer tracy.FrameMark()
+
 		window_on_update()
 
 		ui_begin(a.ui)
