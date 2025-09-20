@@ -132,12 +132,21 @@ key_callback :: proc "c" (window: glfw.WindowHandle, key, scancode, action, mods
 	// TODO: Add more as needed
 	event_key := EventKey.None
 	switch key {
-	case (glfw.KEY_LEFT_SHIFT | glfw.KEY_RIGHT_SHIFT):
+	// TODO: Can we merge these cases?
+	case glfw.KEY_LEFT_SHIFT:
 		event_key = .SHIFT
-	case (glfw.KEY_LEFT_CONTROL | glfw.KEY_RIGHT_CONTROL):
+	case glfw.KEY_RIGHT_SHIFT:
+		event_key = .SHIFT
+	case glfw.KEY_LEFT_CONTROL:
 		event_key = .CTRL
-	case (glfw.KEY_LEFT_ALT | glfw.KEY_RIGHT_ALT):
+	case glfw.KEY_RIGHT_CONTROL:
+		event_key = .CTRL
+	case glfw.KEY_LEFT_ALT:
 		event_key = .ALT
+	case glfw.KEY_RIGHT_ALT:
+		event_key = .ALT
+	case glfw.KEY_ESCAPE:
+		event_key = .ESCAPE
 	case glfw.KEY_BACKSPACE:
 		event_key = .BACKSPACE
 	case glfw.KEY_DELETE:

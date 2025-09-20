@@ -8,6 +8,7 @@ import "core:math/linalg"
 
 import "external:glfw"
 import "external:microui"
+import "external:tracy"
 import "external:wgpu"
 import "external:wgpu/glfwglue"
 
@@ -112,6 +113,8 @@ renderer_render :: proc(
 	texture_sampler: wgpu.Sampler,
 	ui_ctx: ^microui.Context,
 ) {
+	tracy.Zone()
+
 	renderer_begin(r)
 	renderer_render_texture_view(r, texture_view, texture_sampler)
 	renderer_render_microui(r, ui_ctx)

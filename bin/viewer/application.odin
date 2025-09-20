@@ -10,13 +10,19 @@ import "external:tracy"
 import "raytracing2:lib/r2"
 
 Application :: struct {
-	window:   ^Window,
-	renderer: ^Renderer,
-	ui:       ^UI,
-	r2:       ^r2.R2,
+	window:       ^Window,
+	renderer:     ^Renderer,
+	ui:           ^UI,
+	r2:           ^r2.R2,
+	image_width:  u32,
+	image_height: u32,
 }
 
-app_create :: proc(name: string, window_width: u32, window_height: u32) -> ^Application {
+app_create :: proc(
+	name: string,
+	window_width, window_height: u32,
+	image_width, image_height: u32,
+) -> ^Application {
 	// init logging
 	context.logger = log.create_console_logger()
 
@@ -33,9 +39,11 @@ app_create :: proc(name: string, window_width: u32, window_height: u32) -> ^Appl
 		a.window.raw_window,
 	)
 	a.ui = ui_create()
+	a.image_width = image_width
+	a.image_height = image_height
 	a.r2 = r2.init(
-		image_width = window_width,
-		image_height = window_height,
+		image_width = image_width,
+		image_height = image_height,
 		device = a.renderer.device,
 	)
 
@@ -51,6 +59,8 @@ app_run :: proc(a: ^Application) {
 		ui_begin(a.ui)
 		app_ui(a)
 		ui_end(a.ui)
+
+		r2.update_image(a.r2, a.image_width, a.image_height)
 
 		renderer_render(a.renderer, a.r2.texture_view, a.r2.texture_sampler, &a.ui.ctx)
 	}
@@ -73,14 +83,22 @@ app_destroy :: proc(a: ^Application) {
 
 app_ui :: proc(a: ^Application) {
 	ctx := &a.ui.ctx
-	if microui.window(ctx, "Test Window", {40, 40, 300, 450}) {
-		if .ACTIVE in microui.header(ctx, "Test Header") {
-			win := microui.get_current_container(ctx)
-			microui.layout_row(ctx, {54, -1}, 0)
-			microui.label(ctx, "Position:")
-			microui.label(ctx, fmt.tprintf("%d, %d", win.rect.x, win.rect.y))
-			microui.label(ctx, "Size:")
-			microui.label(ctx, fmt.tprintf("%d, %d", win.rect.w, win.rect.h))
+	if microui.window(ctx, "raytracing2", {40, 40, 300, 450}) {
+		if .ACTIVE in microui.header(ctx, "Image Settings", opt = {microui.Opt.EXPANDED}) {
+			// Image Width
+			fwidth := f32(a.image_width)
+			microui.layout_row(ctx, {84, -1}, 0)
+			microui.label(ctx, "Image Width:")
+			microui.slider(ctx, &fwidth, 128, 4096, step = 1.0)
+			a.image_width = u32(fwidth)
+
+			// Image Height
+			fheight := f32(a.image_height)
+			microui.layout_row(ctx, {90, -1}, 0)
+			microui.label(ctx, "Image Height:")
+			microui.slider(ctx, &fheight, 128, 4096, step = 1.0)
+
+			a.image_height = u32(fheight)
 		}
 	}
 }

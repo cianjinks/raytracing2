@@ -95,6 +95,8 @@ convert_event_key_to_ui_key :: proc(key: EventKey) -> (microui.Key, bool) {
 	case .X:
 		return .X, true
 	// not supported by microui
+	case .ESCAPE:
+		fallthrough
 	case .D:
 		fallthrough
 	case .W:

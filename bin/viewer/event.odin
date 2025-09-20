@@ -40,6 +40,7 @@ EventKey :: enum {
 	SHIFT,
 	CTRL,
 	ALT,
+	ESCAPE,
 	BACKSPACE,
 	DELETE,
 	RETURN,
