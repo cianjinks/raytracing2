@@ -275,8 +275,7 @@ renderer_render_texture_view :: proc(
 	encoder := wgpu.DeviceCreateCommandEncoder(r.device, nil)
 	defer wgpu.CommandEncoderRelease(encoder)
 
-	// Create a render pass that clears the screen
-	// (we create it then immediately end it without drawing anything)
+	// Create render pass
 	render_pass := wgpu.CommandEncoderBeginRenderPass(
 		encoder,
 		&wgpu.RenderPassDescriptor {

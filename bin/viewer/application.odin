@@ -13,7 +13,8 @@ Application :: struct {
 	window:       ^Window,
 	renderer:     ^Renderer,
 	ui:           ^UI,
-	r2:           ^r2.R2,
+	r2_state:     ^r2.State,
+	r2_rctx:      ^r2.RenderContext,
 	image_width:  u32,
 	image_height: u32,
 }
@@ -41,11 +42,12 @@ app_create :: proc(
 	a.ui = ui_create()
 	a.image_width = image_width
 	a.image_height = image_height
-	a.r2 = r2.init(
+	a.r2_state = r2.init(
 		image_width = image_width,
 		image_height = image_height,
 		device = a.renderer.device,
 	)
+	a.r2_rctx = r2.create_render_context(a.r2_state)
 
 	return a
 }
@@ -60,9 +62,9 @@ app_run :: proc(a: ^Application) {
 		app_ui(a)
 		ui_end(a.ui)
 
-		r2.update_image(a.r2, a.image_width, a.image_height)
+		texture_view, texture_sampler := r2.render_next_sample(a.r2_state, a.r2_rctx)
 
-		renderer_render(a.renderer, a.r2.texture_view, a.r2.texture_sampler, &a.ui.ctx)
+		renderer_render(a.renderer, texture_view, texture_sampler, &a.ui.ctx)
 	}
 }
 
@@ -74,7 +76,8 @@ app_on_event :: proc(event: Event, user_data: rawptr) {
 }
 
 app_destroy :: proc(a: ^Application) {
-	r2.cleanup(a.r2)
+	r2.destroy_render_context(a.r2_rctx)
+	r2.cleanup(a.r2_state)
 	ui_destroy(a.ui)
 	renderer_destroy(a.renderer)
 	window_destroy(a.window)
@@ -97,8 +100,11 @@ app_ui :: proc(a: ^Application) {
 			microui.layout_row(ctx, {90, -1}, 0)
 			microui.label(ctx, "Image Height:")
 			microui.slider(ctx, &fheight, 128, 4096, step = 1.0)
-
 			a.image_height = u32(fheight)
+
+			// Update Image
+			r2.update_image(a.r2_state, a.image_width, a.image_height)
+			r2.reset_render_context(a.r2_state, a.r2_rctx)
 		}
 	}
 }
