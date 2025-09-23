@@ -103,8 +103,9 @@ app_ui :: proc(a: ^Application) {
 			a.image_height = u32(fheight)
 
 			// Update Image
-			r2.update_image(a.r2_state, a.image_width, a.image_height)
-			r2.reset_render_context(a.r2_state, a.r2_rctx)
+			if r2.update_image(a.r2_state, a.image_width, a.image_height) {
+				r2.reset_render_context(a.r2_state, a.r2_rctx)
+			}
 		}
 	}
 }
