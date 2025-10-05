@@ -38,19 +38,26 @@ update_image :: proc(r: ^State, image_width, image_height: u32) -> b32 {
 
 RenderContext :: struct {
 	// samples
-	_max_sample_count:         u32,
-	_current_sample:           u32,
+	_max_sample_count:                 u32,
+	_current_sample:                   u32,
 	// gpu objects
-	_pixel_data_buffer:        wgpu.Buffer,
-	_current_sample_buffer:    wgpu.Buffer,
-	_compute_shader:           wgpu.ShaderModule,
-	_compute_bindgroup_layout: wgpu.BindGroupLayout,
-	_compute_bindgroup:        wgpu.BindGroup,
-	_compute_pipeline_layout:  wgpu.PipelineLayout,
-	_compute_pipeline:         wgpu.ComputePipeline,
-	_texture:                  wgpu.Texture,
-	_texture_view:             wgpu.TextureView,
-	_texture_sampler:          wgpu.Sampler,
+	//   core renderer:
+	_pixel_data_buffer:                wgpu.Buffer,
+	_current_sample_buffer:            wgpu.Buffer,
+	_compute_shader:                   wgpu.ShaderModule,
+	_compute_bindgroup_layout:         wgpu.BindGroupLayout,
+	_compute_bindgroup:                wgpu.BindGroup,
+	_compute_pipeline_layout:          wgpu.PipelineLayout,
+	_compute_pipeline:                 wgpu.ComputePipeline,
+	//   texture output:
+	_texture:                          wgpu.Texture,
+	_texture_view:                     wgpu.TextureView,
+	_texture_sampler:                  wgpu.Sampler,
+	_texture_compute_shader:           wgpu.ShaderModule,
+	_texture_compute_bindgroup_layout: wgpu.BindGroupLayout,
+	_texture_compute_bindgroup:        wgpu.BindGroup,
+	_texture_compute_pipeline_layout:  wgpu.PipelineLayout,
+	_texture_compute_pipeline:         wgpu.ComputePipeline,
 }
 
 MAX_SAMPLE_COUNT :: 256
@@ -98,17 +105,20 @@ render_next_sample :: proc(r: ^State, rctx: ^RenderContext) -> (wgpu.TextureView
 		wgpu.ComputePassEncoderEnd(compute_pass)
 		wgpu.ComputePassEncoderRelease(compute_pass)
 
-		// Copy result to texture for client to use
-		aligned_bytes_per_row := 4 * r.image_width
-		wgpu.CommandEncoderCopyBufferToTexture(
-			encoder,
-			&wgpu.TexelCopyBufferInfo {
-				buffer = rctx._pixel_data_buffer,
-				layout = {bytesPerRow = aligned_bytes_per_row, rowsPerImage = r.image_height},
-			},
-			&wgpu.TexelCopyTextureInfo{texture = rctx._texture},
-			&wgpu.Extent3D{width = r.image_width, height = r.image_height, depthOrArrayLayers = 1},
+		// Convert data to texture pass
+		texture_convert_pass := wgpu.CommandEncoderBeginComputePass(encoder, nil)
+
+		wgpu.ComputePassEncoderSetPipeline(texture_convert_pass, rctx._texture_compute_pipeline)
+		wgpu.ComputePassEncoderSetBindGroup(
+			texture_convert_pass,
+			0,
+			rctx._texture_compute_bindgroup,
 		)
+
+		wgpu.ComputePassEncoderDispatchWorkgroups(texture_convert_pass, wg_count_x, wg_count_y, 1)
+
+		wgpu.ComputePassEncoderEnd(texture_convert_pass)
+		wgpu.ComputePassEncoderRelease(texture_convert_pass)
 
 		// Encode + submit
 		command_buffer := wgpu.CommandEncoderFinish(encoder, nil)
@@ -133,8 +143,8 @@ reset_render_context :: proc(r: ^State, rctx: ^RenderContext) {
 	// TODO: We very likely don't need to recreate most of these objects every reset
 	//       as they don't rely on data from R2
 
-	// create GPU buffers
-	pixel_buffer_size := 4 * u64(r.image_width) * u64(r.image_height)
+	// create renderer GPU buffers
+	pixel_buffer_size := 4 * size_of(f32) * u64(r.image_width) * u64(r.image_height)
 	rctx._pixel_data_buffer = wgpu.DeviceCreateBuffer(
 		r._device,
 		&{label = "Pixel Data Buffer", usage = {.Storage, .CopySrc}, size = pixel_buffer_size},
@@ -144,36 +154,7 @@ reset_render_context :: proc(r: ^State, rctx: ^RenderContext) {
 		&{label = "Constant Buffer", usage = {.Uniform, .CopyDst}, size = size_of(f32)},
 	)
 
-	// create texture GPU objects
-	rctx._texture = wgpu.DeviceCreateTexture(
-		r._device,
-		&{
-			usage = {.TextureBinding, .CopyDst},
-			dimension = ._2D,
-			size = {width = r.image_width, height = r.image_height, depthOrArrayLayers = 1},
-			format = .RGBA8Unorm,
-			mipLevelCount = 1,
-			sampleCount = 1,
-		},
-	)
-	rctx._texture_view = wgpu.TextureCreateView(rctx._texture, nil)
-	rctx._texture_sampler = wgpu.DeviceCreateSampler(
-		r._device,
-		&{
-			addressModeU = .Repeat,
-			addressModeV = .Repeat,
-			addressModeW = .Repeat,
-			magFilter = .Nearest,
-			minFilter = .Nearest,
-			mipmapFilter = .Nearest,
-			lodMinClamp = 0.0,
-			lodMaxClamp = 1.0,
-			compare = .Undefined,
-			maxAnisotropy = 1,
-		},
-	)
-
-	// create compute GPU objects
+	// create renderer compute GPU objects
 	rctx._compute_shader = wgpu.DeviceCreateShaderModule(
 		r._device,
 		&{
@@ -227,10 +208,118 @@ reset_render_context :: proc(r: ^State, rctx: ^RenderContext) {
 			compute = {module = rctx._compute_shader, entryPoint = "main"},
 		},
 	)
+
+	// create texture GPU objects
+	rctx._texture = wgpu.DeviceCreateTexture(
+		r._device,
+		&{
+			usage = {.TextureBinding, .StorageBinding, .CopyDst},
+			dimension = ._2D,
+			size = {width = r.image_width, height = r.image_height, depthOrArrayLayers = 1},
+			format = .RGBA8Unorm,
+			mipLevelCount = 1,
+			sampleCount = 1,
+		},
+	)
+	rctx._texture_view = wgpu.TextureCreateView(rctx._texture, nil)
+	rctx._texture_sampler = wgpu.DeviceCreateSampler(
+		r._device,
+		&{
+			addressModeU = .Repeat,
+			addressModeV = .Repeat,
+			addressModeW = .Repeat,
+			magFilter = .Nearest,
+			minFilter = .Nearest,
+			mipmapFilter = .Nearest,
+			lodMinClamp = 0.0,
+			lodMaxClamp = 1.0,
+			compare = .Undefined,
+			maxAnisotropy = 1,
+		},
+	)
+
+	// create texture transformation compute GPU objects
+	rctx._texture_compute_shader = wgpu.DeviceCreateShaderModule(
+		r._device,
+		&{
+			nextInChain = &wgpu.ShaderSourceWGSL {
+				sType = .ShaderSourceWGSL,
+				code = #load("shader/convert_texture.wgsl", string),
+			},
+		},
+	)
+	rctx._texture_compute_bindgroup_layout = wgpu.DeviceCreateBindGroupLayout(
+		r._device,
+		&{
+			entryCount = 2,
+			entries = raw_data(
+				[]wgpu.BindGroupLayoutEntry {
+					{
+						binding = 0,
+						visibility = {.Compute},
+						buffer = {type = .ReadOnlyStorage, minBindingSize = pixel_buffer_size},
+					},
+					{
+						binding = 1,
+						visibility = {.Compute},
+						storageTexture = {
+							access = .WriteOnly,
+							format = .RGBA8Unorm,
+							viewDimension = ._2D,
+						},
+					},
+				},
+			),
+		},
+	)
+	rctx._texture_compute_bindgroup = wgpu.DeviceCreateBindGroup(
+		r._device,
+		&{
+			layout = rctx._texture_compute_bindgroup_layout,
+			entryCount = 2,
+			entries = raw_data(
+				[]wgpu.BindGroupEntry {
+					{binding = 0, buffer = rctx._pixel_data_buffer, size = pixel_buffer_size},
+					{binding = 1, textureView = rctx._texture_view},
+				},
+			),
+		},
+	)
+	rctx._texture_compute_pipeline_layout = wgpu.DeviceCreatePipelineLayout(
+		r._device,
+		&{bindGroupLayoutCount = 1, bindGroupLayouts = &rctx._texture_compute_bindgroup_layout},
+	)
+	rctx._texture_compute_pipeline = wgpu.DeviceCreateComputePipeline(
+		r._device,
+		&{
+			layout = rctx._texture_compute_pipeline_layout,
+			compute = {module = rctx._texture_compute_shader, entryPoint = "main"},
+		},
+	)
 }
 
 @(private = "file")
 free_render_context_objects :: proc(rctx: ^RenderContext) {
+	if (rctx._texture_compute_pipeline != nil) {
+		wgpu.ComputePipelineRelease(rctx._compute_pipeline)
+		rctx._compute_pipeline = nil
+	}
+	if (rctx._texture_compute_pipeline_layout != nil) {
+		wgpu.PipelineLayoutRelease(rctx._compute_pipeline_layout)
+		rctx._compute_pipeline_layout = nil
+	}
+	if (rctx._texture_compute_bindgroup != nil) {
+		wgpu.BindGroupRelease(rctx._compute_bindgroup)
+		rctx._compute_bindgroup = nil
+	}
+	if (rctx._texture_compute_bindgroup_layout != nil) {
+		wgpu.BindGroupLayoutRelease(rctx._compute_bindgroup_layout)
+		rctx._compute_bindgroup_layout = nil
+	}
+	if (rctx._texture_compute_shader != nil) {
+		wgpu.ShaderModuleRelease(rctx._compute_shader)
+		rctx._compute_shader = nil
+	}
 	if (rctx._texture_sampler != nil) {
 		wgpu.SamplerRelease(rctx._texture_sampler)
 		rctx._texture_sampler = nil
