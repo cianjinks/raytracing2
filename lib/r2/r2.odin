@@ -36,14 +36,21 @@ update_image :: proc(r: ^State, image_width, image_height: u32) -> b32 {
 	return false
 }
 
+// NOTE: this struct is copied in shader declarations and they must be kept in sync
+RenderUniforms :: struct {
+	_current_sample: u32,
+	_image_width:    u32,
+	_image_height:   u32,
+}
+
 RenderContext :: struct {
-	// samples
+	// render state
+	_uniforms:                         RenderUniforms,
 	_max_sample_count:                 u32,
-	_current_sample:                   u32,
 	// gpu objects
 	//   core renderer:
 	_pixel_data_buffer:                wgpu.Buffer,
-	_current_sample_buffer:            wgpu.Buffer,
+	_uniform_buffer:                   wgpu.Buffer,
 	_compute_shader:                   wgpu.ShaderModule,
 	_compute_bindgroup_layout:         wgpu.BindGroupLayout,
 	_compute_bindgroup:                wgpu.BindGroup,
@@ -60,11 +67,12 @@ RenderContext :: struct {
 	_texture_compute_pipeline:         wgpu.ComputePipeline,
 }
 
+
 MAX_SAMPLE_COUNT :: 256
 WORKGROUP_SIZE_PER_DIMENSION :: 8
 
 // R2 provides a rendering API which expects the user to determine when the rendering
-// needs to be reset (e.g if the user modifies the scene).
+// needs to be reset (e.g if the user modifies the r2 state).
 //
 // NOTE: At the moment I don't have any scene or other concepts yet, so the information needed
 //       for the render is pulled from the R2 struct. Specifically the image width and height.
@@ -77,25 +85,27 @@ create_render_context :: proc(r: ^State) -> ^RenderContext {
 }
 
 render_next_sample :: proc(r: ^State, rctx: ^RenderContext) -> (wgpu.TextureView, wgpu.Sampler) {
-	// Only render if there is samples left
-	if rctx._current_sample < rctx._max_sample_count {
+	if rctx._uniforms._current_sample < rctx._max_sample_count {
 		// Create command encoder
 		encoder := wgpu.DeviceCreateCommandEncoder(r._device, nil)
 		defer wgpu.CommandEncoderRelease(encoder)
+
+		// Write uniforms used across passes
+		wgpu.QueueWriteBuffer(
+			r._queue,
+			rctx._uniform_buffer,
+			0,
+			&rctx._uniforms,
+			size_of(RenderUniforms),
+		)
+
 
 		// Compute pass
 		compute_pass := wgpu.CommandEncoderBeginComputePass(encoder, nil)
 
 		wgpu.ComputePassEncoderSetPipeline(compute_pass, rctx._compute_pipeline)
 		wgpu.ComputePassEncoderSetBindGroup(compute_pass, 0, rctx._compute_bindgroup)
-		f_current_sample := f32(rctx._current_sample)
-		wgpu.QueueWriteBuffer(
-			r._queue,
-			rctx._current_sample_buffer,
-			0,
-			&f_current_sample,
-			size_of(f32),
-		)
+
 		wg_count_x :=
 			(r.image_width + WORKGROUP_SIZE_PER_DIMENSION - 1) / WORKGROUP_SIZE_PER_DIMENSION
 		wg_count_y :=
@@ -127,21 +137,25 @@ render_next_sample :: proc(r: ^State, rctx: ^RenderContext) -> (wgpu.TextureView
 		wgpu.QueueSubmit(r._queue, {command_buffer})
 
 		// Increment sample
-		rctx._current_sample += 1
+		rctx._uniforms._current_sample += 1
 	}
 	return rctx._texture_view, rctx._texture_sampler
 }
 
 reset_render_context :: proc(r: ^State, rctx: ^RenderContext) {
-	// reset sample
+	// reset state
 	rctx._max_sample_count = MAX_SAMPLE_COUNT
-	rctx._current_sample = 0
+	rctx._uniforms = {
+		_current_sample = 0,
+		_image_width    = r.image_width,
+		_image_height   = r.image_height,
+	}
 
 	// free GPU objects if they already exist
 	free_render_context_objects(rctx)
 
 	// TODO: We very likely don't need to recreate most of these objects every reset
-	//       as they don't rely on data from R2
+	//       as they don't rely on data from R2 state
 
 	// create renderer GPU buffers
 	pixel_buffer_size := 4 * size_of(f32) * u64(r.image_width) * u64(r.image_height)
@@ -149,9 +163,9 @@ reset_render_context :: proc(r: ^State, rctx: ^RenderContext) {
 		r._device,
 		&{label = "Pixel Data Buffer", usage = {.Storage, .CopySrc}, size = pixel_buffer_size},
 	)
-	rctx._current_sample_buffer = wgpu.DeviceCreateBuffer(
+	rctx._uniform_buffer = wgpu.DeviceCreateBuffer(
 		r._device,
-		&{label = "Constant Buffer", usage = {.Uniform, .CopyDst}, size = size_of(f32)},
+		&{label = "Uniform Buffer", usage = {.Uniform, .CopyDst}, size = size_of(RenderUniforms)},
 	)
 
 	// create renderer compute GPU objects
@@ -178,7 +192,7 @@ reset_render_context :: proc(r: ^State, rctx: ^RenderContext) {
 					{
 						binding = 1,
 						visibility = {.Compute},
-						buffer = {type = .Uniform, minBindingSize = size_of(f32)},
+						buffer = {type = .Uniform, minBindingSize = size_of(RenderUniforms)},
 					},
 				},
 			),
@@ -192,7 +206,7 @@ reset_render_context :: proc(r: ^State, rctx: ^RenderContext) {
 			entries = raw_data(
 				[]wgpu.BindGroupEntry {
 					{binding = 0, buffer = rctx._pixel_data_buffer, size = pixel_buffer_size},
-					{binding = 1, buffer = rctx._current_sample_buffer, size = size_of(f32)},
+					{binding = 1, buffer = rctx._uniform_buffer, size = size_of(RenderUniforms)},
 				},
 			),
 		},
@@ -251,7 +265,7 @@ reset_render_context :: proc(r: ^State, rctx: ^RenderContext) {
 	rctx._texture_compute_bindgroup_layout = wgpu.DeviceCreateBindGroupLayout(
 		r._device,
 		&{
-			entryCount = 2,
+			entryCount = 3,
 			entries = raw_data(
 				[]wgpu.BindGroupLayoutEntry {
 					{
@@ -268,6 +282,11 @@ reset_render_context :: proc(r: ^State, rctx: ^RenderContext) {
 							viewDimension = ._2D,
 						},
 					},
+					{
+						binding = 2,
+						visibility = {.Compute},
+						buffer = {type = .Uniform, minBindingSize = size_of(RenderUniforms)},
+					},
 				},
 			),
 		},
@@ -276,11 +295,12 @@ reset_render_context :: proc(r: ^State, rctx: ^RenderContext) {
 		r._device,
 		&{
 			layout = rctx._texture_compute_bindgroup_layout,
-			entryCount = 2,
+			entryCount = 3,
 			entries = raw_data(
 				[]wgpu.BindGroupEntry {
 					{binding = 0, buffer = rctx._pixel_data_buffer, size = pixel_buffer_size},
 					{binding = 1, textureView = rctx._texture_view},
+					{binding = 2, buffer = rctx._uniform_buffer, size = size_of(RenderUniforms)},
 				},
 			),
 		},
@@ -352,9 +372,9 @@ free_render_context_objects :: proc(rctx: ^RenderContext) {
 		wgpu.ShaderModuleRelease(rctx._compute_shader)
 		rctx._compute_shader = nil
 	}
-	if (rctx._current_sample_buffer != nil) {
-		wgpu.BufferRelease(rctx._current_sample_buffer)
-		rctx._current_sample_buffer = nil
+	if (rctx._uniform_buffer != nil) {
+		wgpu.BufferRelease(rctx._uniform_buffer)
+		rctx._uniform_buffer = nil
 	}
 	if (rctx._pixel_data_buffer != nil) {
 		wgpu.BufferRelease(rctx._pixel_data_buffer)
