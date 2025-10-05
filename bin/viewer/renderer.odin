@@ -19,6 +19,8 @@ Renderer :: struct {
 	window_width:             u32,
 	window_height:            u32,
 	window_dpi:               f32,
+	image_width:              u32,
+	image_height:             u32,
 
 	// create
 	instance:                 wgpu.Instance,
@@ -33,6 +35,7 @@ Renderer :: struct {
 	texture_pipeline_layout:  wgpu.PipelineLayout,
 	texture_pipeline:         wgpu.RenderPipeline,
 	texture_quad_buffer:      wgpu.Buffer,
+	texture_transform_matrix: wgpu.Buffer,
 	texture_bindgroup_layout: wgpu.BindGroupLayout,
 
 	// microui rendering
@@ -73,6 +76,7 @@ INDEX_PER_QUAD :: 6
 renderer_create :: proc(
 	window_width, window_height: u32,
 	window_dpi: f32,
+	image_width, image_height: u32,
 	raw_window: glfw.WindowHandle,
 ) -> ^Renderer {
 	r := new(Renderer)
@@ -80,6 +84,8 @@ renderer_create :: proc(
 	r.window_width = window_width
 	r.window_height = window_height
 	r.window_dpi = window_dpi
+	r.image_width = image_width
+	r.image_height = image_height
 
 	wgpu.SetLogCallback(log_callback, nil)
 
@@ -134,6 +140,14 @@ renderer_on_event :: proc(r: ^Renderer, event: Event) {
 	}
 }
 
+renderer_update_image :: proc(r: ^Renderer, image_width: u32, image_height: u32) {
+	if ((r.image_width != image_width) || (r.image_height != image_height)) {
+		r.image_width = image_width
+		r.image_height = image_height
+		renderer_update_texture_transform(r)
+	}
+}
+
 renderer_destroy :: proc(r: ^Renderer) {
 	// ui rendering
 	wgpu.RenderPipelineRelease(r.ui_pipeline)
@@ -152,6 +166,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 
 	// texture rendering
 	wgpu.BindGroupLayoutRelease(r.texture_bindgroup_layout)
+	wgpu.BufferRelease(r.texture_transform_matrix)
 	wgpu.BufferRelease(r.texture_quad_buffer)
 	wgpu.RenderPipelineRelease(r.texture_pipeline)
 	wgpu.PipelineLayoutRelease(r.texture_pipeline_layout)
@@ -260,11 +275,16 @@ renderer_render_texture_view :: proc(
 		r.device,
 		&{
 			layout = r.texture_bindgroup_layout,
-			entryCount = 2,
+			entryCount = 3,
 			entries = raw_data(
 				[]wgpu.BindGroupEntry {
 					{binding = 0, textureView = texture_view},
 					{binding = 1, sampler = texture_sampler},
+					{
+						binding = 2,
+						buffer = r.texture_transform_matrix,
+						size = size_of(matrix[4, 4]f32),
+					},
 				},
 			),
 		},
@@ -285,7 +305,7 @@ renderer_render_texture_view :: proc(
 				depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
 				loadOp = .Clear,
 				storeOp = .Store,
-				clearValue = {1.0, 0.0, 0.0, 1.0},
+				clearValue = {0.0, 0.0, 0.0, 1.0},
 			},
 		},
 	)
@@ -323,14 +343,14 @@ renderer_end :: proc(r: ^Renderer) {
 renderer_render_microui :: proc(r: ^Renderer, ctx: ^microui.Context) {
 	// Every micro UI object can be rendered with quads, so to render
 	// the UI we do the following:
-	// 
+	//
 	//  - Loop over each UI object to render
 	//    - If the CPU side buffers are full
 	//      - Flush to GPU + render
 	//    - Write the appropriate quad data to the CPU side buffers
 	//      - vertices, indices, texture coords, color
-	//  - Flush any remaining CPU data to GPU + render 
-	// 
+	//  - Flush any remaining CPU data to GPU + render
+	//
 
 	curr_quad_index := 0
 
@@ -528,6 +548,48 @@ renderer_flush_quads :: proc(r: ^Renderer, curr_quad_index: ^int) {
 }
 
 @(private = "file")
+renderer_update_texture_transform :: proc(r: ^Renderer) {
+
+	textureRatio := f32(r.image_width) / f32(r.image_height)
+	windowRatio := f32(r.window_width) / f32(r.window_height)
+
+	if textureRatio > windowRatio {
+		transform := linalg.matrix_ortho3d(
+			-textureRatio / windowRatio,
+			textureRatio / windowRatio,
+			-1.0,
+			1.0,
+			-1.0,
+			1.0,
+		)
+		wgpu.QueueWriteBuffer(
+			r.queue,
+			r.texture_transform_matrix,
+			0,
+			&transform,
+			size_of(transform),
+		)
+	} else {
+		transform := linalg.matrix_ortho3d(
+			-1.0,
+			1.0,
+			-windowRatio / textureRatio,
+			windowRatio / textureRatio,
+			-1.0,
+			1.0,
+		)
+		wgpu.QueueWriteBuffer(
+			r.queue,
+			r.texture_transform_matrix,
+			0,
+			&transform,
+			size_of(transform),
+		)
+	}
+
+}
+
+@(private = "file")
 renderer_update_ui_transform :: proc(r: ^Renderer) {
 	transform :=
 		linalg.matrix_ortho3d(0, f32(r.config.width), f32(r.config.height), 0, -1, 1) *
@@ -587,11 +649,22 @@ renderer_setup_texture_objects :: proc(r: ^Renderer) {
 	)
 	wgpu.QueueWriteBuffer(r.queue, r.texture_quad_buffer, 0, rawptr(&data[0]), uint(data_size))
 
+	// matrix
+	r.texture_transform_matrix = wgpu.DeviceCreateBuffer(
+		r.device,
+		&{
+			label = "Transform Matrix Buffer",
+			usage = {.Uniform, .CopyDst},
+			size = size_of(matrix[4, 4]f32),
+		},
+	)
+	renderer_update_texture_transform(r)
+
 	// bindings
 	r.texture_bindgroup_layout = wgpu.DeviceCreateBindGroupLayout(
 		r.device,
 		&{
-			entryCount = 2,
+			entryCount = 3,
 			entries = raw_data(
 				[]wgpu.BindGroupLayoutEntry {
 					{
@@ -600,6 +673,11 @@ renderer_setup_texture_objects :: proc(r: ^Renderer) {
 						texture = {sampleType = .Float, viewDimension = ._2D},
 					},
 					{binding = 1, visibility = {.Fragment}, sampler = {type = .Filtering}},
+					{
+						binding = 2,
+						visibility = {.Vertex},
+						buffer = {type = .Uniform, minBindingSize = size_of(matrix[4, 4]f32)},
+					},
 				},
 			),
 		},
@@ -710,6 +788,7 @@ renderer_setup_ui_objects :: proc(r: ^Renderer) {
 			size = size_of(matrix[4, 4]f32),
 		},
 	)
+	renderer_update_ui_transform(r)
 
 	r.ui_vertex_buffer = wgpu.DeviceCreateBuffer(
 		r.device,

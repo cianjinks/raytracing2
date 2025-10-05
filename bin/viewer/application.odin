@@ -32,19 +32,21 @@ app_create :: proc(
 
 	// create application
 	a := new(Application)
+	a.image_width = image_width
+	a.image_height = image_height
 	a.window = window_create(name, window_width, window_height, app_on_event, rawptr(a))
 	a.renderer = renderer_create(
 		window_width,
 		window_height,
 		window_get_dpi(a.window),
+		a.image_width,
+		a.image_height,
 		a.window.raw_window,
 	)
 	a.ui = ui_create()
-	a.image_width = image_width
-	a.image_height = image_height
 	a.r2_state = r2.init(
-		image_width = image_width,
-		image_height = image_height,
+		image_width = a.image_width,
+		image_height = a.image_height,
 		device = a.renderer.device,
 	)
 	a.r2_rctx = r2.create_render_context(a.r2_state)
@@ -92,17 +94,18 @@ app_ui :: proc(a: ^Application) {
 			fwidth := f32(a.image_width)
 			microui.layout_row(ctx, {84, -1}, 0)
 			microui.label(ctx, "Image Width:")
-			microui.slider(ctx, &fwidth, 128, 4096, step = 1.0)
+			microui.slider(ctx, &fwidth, 128, 1920, step = 1.0)
 			a.image_width = u32(fwidth)
 
 			// Image Height
 			fheight := f32(a.image_height)
 			microui.layout_row(ctx, {90, -1}, 0)
 			microui.label(ctx, "Image Height:")
-			microui.slider(ctx, &fheight, 128, 4096, step = 1.0)
+			microui.slider(ctx, &fheight, 128, 1920, step = 1.0)
 			a.image_height = u32(fheight)
 
 			// Update Image
+			renderer_update_image(a.renderer, a.image_width, a.image_height)
 			if r2.update_image(a.r2_state, a.image_width, a.image_height) {
 				r2.reset_render_context(a.r2_state, a.r2_rctx)
 			}
